@@ -1,0 +1,749 @@
+---
+title: ' Data Driven Revenue Management/ Menu Engineering'
+author: "Anthonia Fisuyi"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list=ls())
+```
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(car)
+library(corrplot)
+library(treemap)
+library(scales)
+library(vtable)
+library("readxl")
+library("tidyverse")
+library("fpp2")
+library("dplyr") # for data wrangling
+library("DataExplorer") # for exploratory data analysis
+library("class") # for exploratory data analysis
+library(cluster)
+
+library(caret) # for implementing RFE for feature selection
+library(randomForest) #for implementing RFE for feature selection
+library(e1071) # for Naive
+library(rpart) # for DT
+library(rpart.plot) # for DT
+library(nnet) # for NN
+library(factoextra) ##clustering
+
+setwd("C:/Users/Probook/OneDrive/Challenge-Personal/Projects/MenuOptimization")
+
+```
+
+```{r}
+# Read the Excel file
+menu_data <- read_excel("menu_full.xlsx")
+
+names(menu_data)
+#names(pclient)
+```
+
+
+```{r exploratory analysis}
+# Convert non-numeric variables to appropriate types
+menu_data <- menu_data %>%
+  mutate_if(is.character, as.factor)  # Convert character variables to factors if needed
+
+
+DataExplorer::plot_intro(menu_data , title = "menu_data Exploratory Analysis") # check the types of variables
+```
+```{r munu explor}
+# Perform exploratory analysis
+summary(menu_data)  # Summary statistics
+glimpse(menu_data)  # Variable information
+head(menu_data)  # Preview of the first few rows
+
+# Plot the distributions of numeric variables
+numeric_vars <- select_if(menu_data, is.numeric)
+for (var in colnames(numeric_vars)) {
+  ggplot(menu_data, aes(x = !!as.symbol(var))) +
+    geom_histogram(fill = "skyblue", color = "black") +
+    labs(x = var, y = "Count", title = paste("Distribution of", var)) +
+    theme_minimal()
+}
+
+# Plot the frequencies of categorical variables
+categorical_vars <- select_if(menu_data, is.factor)
+plot_bar(categorical_vars)
+
+# Create a correlation matrix for numeric variables
+correlation_matrix <- cor(na.omit(numeric_vars))
+plot_correlation(correlation_matrix)
+
+
+```
+
+```{r summarize the menudataset, results= 'hide'}
+# Summary of menu_data
+st(menu_data, title = "Summary Statistics_menu_data",
+   out = "csv" , file='menudata_summary')
+
+```
+
+
+# Descriptive Analysis
+
+```{r menu descriptive}
+summary(menu_data$score)
+summary(menu_data$reviewcount)
+summary(menu_data$profitability)
+summary(menu_data$accesibility)
+```
+
+```{r menu preprocessing handling null}
+
+menu_data <- menu_data %>%
+  mutate(price = ifelse(is.na(price), ave(price, menucategory, FUN = function(x) mean(x, na.rm = TRUE)), price))
+
+menu_data$profitability <- ifelse(menu_data$accesibility == 0, 0, (menu_data$price * menu_data$score) / menu_data$accesibility)
+
+```
+
+
+How does accessibility impact pricing strategies in restaurant startups?
+
+```{r menu accessibility impact pricing strategies}
+
+y <- abs(log(menu_data$price))
+
+
+# Scatter plot of accessibility vs. pricing
+ggplot(menu_data, aes(x = accesibility , y = y)) +
+  geom_point() +
+  labs(x = "Accessibility", y = "Price", title = "Accessibility vs. Pricing")
+
+
+```
+
+# Regression Analysis
+
+What variables influence pricing decisions in the restaurant industry?
+
+### Encoding
+
+```{r encoding categorical variables }
+
+menunumeric <- menu_data%>% select_if(is.numeric) # Remove non-numeric columns
+
+```
+
+
+# LM
+```{r lR modelng}
+# Fit the multiple linear regression model
+
+modelm <- lm(log(price) ~ ., data = menunumeric)
+summary(modelm)
+
+# Plot predicted vs. actual values
+
+ggplot(menu_data, aes(x=predict(modelm), y= log(price))) +
+  geom_point() +
+  geom_abline(intercept=0, slope=1) +
+  labs(x='Predicted Values', y='Actual Values', title='Predicted vs. Actual Values')
+
+cor(predict(modelm), menu_data$price) ## this looks at the correlation of forecasts and the predicted values = 0.3083496 , its not too high
+
+plot(density(resid(modelm)))
+
+```
+
+Log-transforming the price variable may be more appropriate in certain scenarios, such as when the relative percentage change in price is more relevant than the absolute change, or when the focus is on understanding price elasticity or comparing relative differences across different price levels. result in a more symmetric and homoscedastic distribution, which is desirable for many regression analyses.  provide a more interpretable and meaningful interpretation, especially when dealing with variables that have varying scales help address potential non-linear relationships between the predictors and the response variable.
+
+
+A higher correlation value implies that the model's predictions are closer to the actual prices, indicating that the chosen independent variables in the regression analysis may capture some of the factors influencing pricing decisions.
+
+the model's R-squared value of 0.5899 indicates that the independent variables in the model explain approximately 58.99% of the variance in the pricing decisions
+
+The coefficients section shows the estimated regression coefficients for each predictor variable. For example, the coefficient for the "score" variable is -1.904, indicating that a one-unit increase in the score is associated with a decrease in the price by approximately 1.904 units. Similarly, the coefficients for "accesibility" and "profitability" suggest that an increase in these variables is associated with an increase in the price.
+
+Review Count: The number of reviews a menu item received was found to be statistically insignificant (p-value = 0.79) in influencing pricing decisions. Thus, the review count does not appear to have a significant impact on menu item pricing in the restaurant industry.
+
+Score: The score, which represents ratings or customer satisfaction, was found to be a statistically significant variable (p-value < 0.001). A negative coefficient (-1.904) suggests that higher scores are associated with lower menu item prices. This implies that restaurants may offer lower prices for highly rated menu items to attract customers or maintain competitiveness.
+
+Accessibility: Accessibility, encompassing factors like convenience and availability, was found to be a statistically significant variable (p-value < 0.001). The positive coefficient (0.6623) indicates that increased accessibility is associated with higher pricing decisions. Restaurants may charge higher prices for easily accessible menu items.
+
+Profitability: Menu item profitability was found to have a highly significant influence on pricing decisions (p-value < 2e-16). The positive coefficient (0.4978) suggests that more profitable menu items are priced higher. Restaurants may set higher prices for menu items that generate greater profitability, aiming to maximize revenue and profitability.
+
+In summary, the analysis revealed that variables such as the score, accessibility, and profitability significantly influence pricing decisions in the restaurant industry. However, the review count was found to have no significant impact on pricing decisions. These findings provide valuable insights for restaurant owners and managers in making informed pricing decisions to enhance revenue management and competitive advantage.
+
+
+## checking the collinearity in the variables
+
+```{r menu corplot}
+corrplot(cor(menunumeric))
+```
+
+the 'darker' the circles are, it means that the more positively correlated the variables.
+
+
+# Menu Engineering
+
+```{r Kasavana and Smith methodology }
+
+menufinal_data <-menu_data
+menufinal_data$categorization <- NA
+
+# Categorize based on thresholds
+menufinal_data$categorization[menufinal_data$profitability > quantile(menufinal_data$profitability, probs = 0.75) & menufinal_data$popularity > mean(menufinal_data$popularity) ] <- "star"
+menufinal_data$categorization[menufinal_data$profitability > quantile(menufinal_data$profitability, probs = 0.75) & menufinal_data$popularity <= mean(menufinal_data$popularity) ] <- "puzzle"
+menufinal_data$categorization[menufinal_data$profitability <= quantile(menufinal_data$profitability, probs = 0.75) & menufinal_data$popularity > mean(menufinal_data$popularity) ] <- "plow horses"
+menufinal_data$categorization[menufinal_data$profitability <= quantile(menufinal_data$profitability, probs = 0.75) & menufinal_data$popularity <= mean(menufinal_data$popularity) ] <- "dogs"
+
+```
+
+
+# Cluster Analysis
+
+```{r cluster analysist}
+set.seed(123)
+
+clusterdata <- menu_data
+clusterdata <-  scale(clusterdata %>% select_if(is.numeric))
+
+# Compute the optimal number of clusters using fviz_nbclust()
+optimal_clusters <- fviz_nbclust(clusterdata, kmeans, method = "wss") #silhouette
+# Plot the results
+print(optimal_clusters)
+
+
+# Compute k-means with k = 4
+kmeans_result <- kmeans(clusterdata, 4, nstart = 25)
+
+# Print the results
+print(kmeans_result)
+
+# Visualize k-means clusters
+fviz_cluster(kmeans_result, data = clusterdata, geom = "point", palette = "viridis::viridis")#jco
+#fviz_cluster(kmeans_result, data = clusterdata)
+
+# Add cluster assignments to menu_data
+menufinal_data <- cbind(menufinal_data, cluster = kmeans_result$cluster)
+head(menufinal_data)
+```
+
+# Domain Knowledge
+
+interpret the clusters based on their characteristics
+
+1: Hotspot = High Popularity, High Accessibility, Moderate Pricing: This cluster represents menu items that are popular among customers, easily accessible, and reasonably priced. These items can be considered as the core offerings with consistent demand.
+
+2: Underdog = Low Popularity, Low Accessibility, Low Pricing: This cluster represents menu items that have low popularity, limited accessibility, and relatively lower pricing. These items may require further analysis and optimization to increase their appeal and profitability.
+
+3: Gourmet=  Moderate Popularity, Moderate Accessibility, High Pricing: This cluster represents menu items with moderate popularity, moderate accessibility, and higher pricing. These items may cater to a specific target audience or offer unique features that justify the higher pricing.
+
+4: Hidden Gem = Low Popularity, High Accessibility, Moderate Pricing: This cluster represents menu items that have low popularity but high accessibility and moderate pricing. These items may benefit from targeted marketing and promotional efforts to increase their visibility and attract more customers.
+
+•	Dogs, are unpopular and unprofitable, 
+•	Puzzles, are unpopular yet profitable, 
+•	Stars,  are popular and profitable,
+•	Plow Horses, are popular but unprofitable
+
+```{r cluster_mapping}
+
+cluster_mapping <- setNames(c("Hotspot", "Underdog", "Gourmet", "Hidden Gem"), c(1, 2, 3, 4))
+
+# Recode the cluster column using the cluster_mapping
+menufinal_data <- menufinal_data %>% 
+  mutate(cluster = case_when(
+    cluster == 1 ~ "Hotspot",
+    cluster == 2 ~ "Underdog",
+    cluster == 3 ~ "Gourmet",
+    cluster == 4 ~ "Hidden Gem"
+  ))
+
+```
+
+
+```{r cluster price distribution}
+ggplot(menufinal_data, aes(x = factor(cluster), y = log(price))) +
+  geom_boxplot(fill = "lightblue") +
+  xlab("Cluster") +
+  ylab("Menu Price")
+
+```
+
+```{r cluster&category}
+categorization_counts <- table(menufinal_data$categorization)
+print(categorization_counts)
+
+# Create a bar plot of categorization
+category_percent <- categorization_counts / sum(categorization_counts) * 100
+
+barplot(categorization_counts,
+        main = "Menu Categorization",
+        xlab = "Category",
+        ylab = "Count",
+        ylim = c(0, max(categorization_counts) * 1.1))
+text(x = 1:length(categorization_counts),
+     y = categorization_counts,
+     labels = paste0(round(category_percent), "%"),
+     pos = 3)
+
+#2
+ggplot(menufinal_data, aes(x = factor(cluster), fill = categorization)) +
+  geom_bar(position = "fill") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_fill(vjust = 0.5), size = 3) +
+  xlab("Cluster") +
+  ylab("Category Proportion") +
+  scale_fill_discrete(name = "categorization")
+
+
+#3
+# Create a table of counts
+category_table <- table(menufinal_data$categorization, menufinal_data$cluster)
+# Convert the table to a data frame
+category_df <- as.data.frame.matrix(category_table)
+# Print the table
+category_df
+
+#4 pprofitability plot
+ggplot(menufinal_data, aes(x = categorization, y = log(profitability), fill = factor(cluster))) +
+  geom_boxplot() +
+  xlab("Menu Category") +
+  ylab("Profitability") +
+  scale_fill_discrete(name = "categorization")
+
+```
+
+```{r menu variables}
+# Manually provide descriptions for each variable
+variable_desc <- c(
+  "menuid" = "unique identifier for each menu item.",
+  "restaurantid" = "unique identifier assigned to each restaurant.",
+  "reviewcount" = "number of reviews received for a particular restaurant.",
+  "Postcode" = "geographical location associated with the restaurant.",
+  "generalcategory" = "categorizes the menu item into a broad category.",
+  "menucategory" = "specifies the specific category or type of menu items.",
+  "productcategory" = "represents the category of the specific menu.",
+  "score" = "score or rating assigned to the menu item based on Google reviews.",
+  "popularity" = "internal rating assigned based on reviewcount, reflects the popularity level of the menu item.",
+  "accessibility" = "the accessibility or ease of obtaining the menu item, assigned based on menu price and product category.",
+  "pricerange" = "categorizes the menu item into a specific price range based on its product category.",
+  "profitability" = "internal rating assigned calculated based on score, popularity, accessibility, and price range, indicates the profitability of the menu item.",
+  "price" = "indicates the price of the menu item."
+)
+
+# Create a dataframe with variable descriptions
+mvariable_df <- data.frame(variable = names(variable_desc), description = variable_desc, row.names = NULL)
+
+#str(menu_data)
+```
+
+
+
+# Binary Classification 
+
+```{r}
+potentialclients <- read_excel("clients.xlsx")
+
+#head(test)
+potentialclients <- potentialclients %>%
+  mutate_if(is.character, as.factor)  # Convert character variables to factors if needed
+
+```
+
+```{r client explore}
+# Perform exploratory analysis
+summary(potentialclients)  # Summary statistics
+glimpse(potentialclients)  # Variable information
+head(potentialclients)  # Preview of the first few rows
+
+# Plot the distributions of numeric variables
+numeric_vars1 <- select_if(potentialclients, is.numeric)
+for (var in colnames(numeric_vars1)) {
+  ggplot(potentialclients, aes(x = !!as.symbol(var))) +
+    geom_histogram(fill = "skyblue", color = "black") +
+    labs(x = var, y = "Count", title = paste("Distribution of", var)) +
+    theme_minimal()
+}
+
+# Plot the frequencies of categorical variables
+categorical_vars1 <- select_if(potentialclients, is.factor)
+plot_bar(categorical_vars1)
+
+# Create a correlation matrix for numeric variables
+correlation_matrix1 <- cor(numeric_vars1)
+plot_correlation(correlation_matrix1)
+
+
+```
+
+## ECOMMERCE OPPORTUNITY
+
+```{r b2b adoption}
+# Decode TRUE to 1 and FALSE to 0 for all columns
+potentialclients <- potentialclients %>%  mutate_if(is.logical, ~ as.integer(.))
+#b2b <- b2b %>%  mutate_if(is.logical, ~ as.integer(.))
+
+clientsnumeric <- potentialclients%>% select_if(is.numeric)
+
+```
+
+
+```{r client exploration}
+DataExplorer::plot_intro(potentialclients , title = "client Exploratory Analysis") # check the types of variables
+
+summary(potentialclients$irating)
+summary(potentialclients$menu_count)
+```
+
+```{r,  results='hide'}
+
+st(potentialclients, title = "Summary Statistics_clients",
+   out = "csv" , file='client_summary')
+```
+
+
+```{r split data 70/30}
+# set seed for reproducibility
+set.seed(123)
+
+train_index <- createDataPartition(y = potentialclients$b2badoption, p = 0.3, list = FALSE)
+train <- potentialclients[train_index, ]
+
+```
+
+```{r recoding}
+train <- train[, !(names(train) %in% c("id" ))]
+
+#train <- train %>%   mutate_if(is.character, factor) 
+train <- train %>%    mutate_if(is.character, factor) 
+potentialclients <- potentialclients %>%    mutate_if(is.character, factor) 
+
+#train$y <- as.factor(train$y)
+train$b2badoption <- as.factor(train$b2badoption)
+potentialclients$b2badoption <- as.factor(potentialclients$b2badoption)
+
+#traincontrol
+tctrl <- trainControl(method = "cv" , number = 10)
+
+```
+
+
+```{r rfe}
+set.seed(123)
+
+x <- train %>% select(-ncol(train)) %>%  as.data.frame()
+y <- train$b2badoption  %>%  as.factor()
+
+rfemodel <- rfe(x = x, y = y, sizes = 10, rfeControl = rfeControl(functions = rfFuncs), method = "cv", )
+
+# Print important variables
+varImp(rfemodel)
+#rfemodel$bestSubset
+
+```
+
+
+```{r Important Variables,}
+
+set.seed(123)
+
+important_var <-varImp(rfemodel , scale = FALSE) # estimate variable importance
+
+# create a data frame for the variable importance
+important_var_df <- data.frame(
+  Variables = rownames(important_var),
+  Importance = important_var$Overall)
+
+top_10_variables <- head(important_var_df, 10)
+
+
+# plot the variable importance using ggplot2
+library(ggplot2)
+ggplot(top_10_variables, aes(x = Importance, y = Variables)) +
+  geom_point() +
+  geom_segment(aes(x = 0, xend = Importance, y = Variables, yend = Variables)) +
+  labs(x = "Importance", y = "Restaurant Variables", title = "Variable Importance Plot") +
+  theme_bw()
+
+```
+
+
+```{r using important variables}
+# Subset the original dataset based on the selected features
+
+train_subset <- train[, top_10_variables$Variables]
+train_subset$y <- train$b2badoption
+
+clientfinal <- potentialclients
+```
+
+```{r cm df}
+# Initialize an empty dataframe to store the confusion matrices
+confusion_df <- data.frame(Model = character(),
+                           TP = numeric(),
+                           TN = numeric(),
+                           FN = numeric(),
+                           FP = numeric(),
+                           stringsAsFactors = FALSE)
+```
+
+
+
+```{r Naive Bayes}
+
+model_nb <- naiveBayes(y ~ ., data = train_subset, trControl = tctrl)
+
+clientfinal$prediction_nb = predict(model_nb,newdata = clientfinal,  type = "class")
+
+confusion_matrix_nb <- confusionMatrix(clientfinal$prediction_nb, clientfinal$b2badoption )
+confusion_df <- rbind(confusion_df, c("Naive Bayes", confusion_matrix_nb$table[2, 2], confusion_matrix_nb$table[1, 1],
+                                      confusion_matrix_nb$table[2, 1], confusion_matrix_nb$table[1, 2]))
+
+```
+
+
+```{r REGRESSION}
+set.seed(123)
+
+model_lr <- train(y ~ ., data=train_subset, method = "glm", family = "binomial", trControl = tctrl)
+
+clientfinal$prediction_logistic <- predict(model_lr, newdata = clientfinal)
+
+confusion_matrix_lr <- confusionMatrix(clientfinal$prediction_logistic, clientfinal$b2badoption)
+confusion_df <- rbind(confusion_df, c("Logistic Regression", confusion_matrix_lr$table[2, 2],
+                                      confusion_matrix_lr$table[1, 1],confusion_matrix_lr$table[2, 1],
+                                      confusion_matrix_lr$table[1, 2]))
+
+
+```
+
+
+```{r nn}
+set.seed(123)
+
+model_nn <- train(y ~ .,data=train_subset ,  method = "nnet", trControl = tctrl, trace = FALSE)
+clientfinal$prediction_nn = predict(model_nn,clientfinal)
+
+
+confusion_matrix_nn <- confusionMatrix(clientfinal$prediction_nn, clientfinal$b2badoption )
+confusion_df <- rbind(confusion_df, c("Neural Network", confusion_matrix_nn$table[2, 2], confusion_matrix_nn$table[1, 1],
+                                      confusion_matrix_nn$table[2, 1], confusion_matrix_nn$table[1, 2]))
+
+
+```
+
+
+```{r Random Forest}
+set.seed(123)
+
+model_rf <- train(y ~. ,train_subset, method = "rf", ntree = 200, trControl = tctrl)
+clientfinal$prediction_rf = predict(model_rf,clientfinal , type = "raw")
+
+confusion_matrix_rf <- confusionMatrix(clientfinal$prediction_rf, clientfinal$b2badoption )
+confusion_df <- rbind(confusion_df, c("Random Forest", confusion_matrix_rf$table[2, 2], confusion_matrix_rf$table[1, 1],
+                                      confusion_matrix_rf$table[2, 1], confusion_matrix_rf$table[1, 2]))
+
+```
+
+
+```{r decision Tree}
+set.seed(123)
+minbucket_value <- 10
+rpart_control <- rpart.control(minbucket = minbucket_value)
+
+tree <- rpart(y ~., data = train_subset, method = "class", control = rpart_control)
+
+rpart.plot(tree)
+
+model_dt <- rpart(y ~ ., data = train_subset, method = "class")
+clientfinal$prediction_dt = predict(model_dt,clientfinal , type = "class")
+
+confusion_matrix_dt <- confusionMatrix(clientfinal$prediction_dt, clientfinal$b2badoption )
+confusion_df <- rbind(confusion_df, c("Decision Tree", confusion_matrix_dt$table[2, 2], confusion_matrix_dt$table[1, 1],
+                                      confusion_matrix_dt$table[2, 1], confusion_matrix_dt$table[1, 2]))
+
+# Rename the columns
+colnames(confusion_df) <- c("Model", "True Positive", "True Negative", "False Negative", "False Positive")
+confusion_df
+```
+
+
+```{r performance and predictive metrics}
+
+# Create an empty dataframe to store the performance metrics
+metrics_df <- data.frame(Model = character(),
+                         Accuracy = numeric(),
+                         Precision = numeric(),
+                         Recall = numeric(),
+                         F1_Score = numeric(),
+                         stringsAsFactors = FALSE)
+# Decision Tree
+metrics_df <- rbind(metrics_df, c("Decision Tree", confusion_matrix_dt$overall["Accuracy"],
+                                  confusion_matrix_dt$byClass["Precision"],
+                                  confusion_matrix_dt$byClass["Recall"],
+                                  confusion_matrix_dt$byClass["F1"]))
+# Logistic Regression
+metrics_df <- rbind(metrics_df, c("Logistic Regression", confusion_matrix_lr$overall["Accuracy"],
+                                  confusion_matrix_lr$byClass["Precision"],
+                                  confusion_matrix_lr$byClass["Recall"],
+                                  confusion_matrix_lr$byClass["F1"]))
+# Naive Bayes
+metrics_df <- rbind(metrics_df, c("Naive Bayes", confusion_matrix_nb$overall["Accuracy"],
+                                  confusion_matrix_nb$byClass["Precision"],
+                                  confusion_matrix_nb$byClass["Recall"],
+                                  confusion_matrix_nb$byClass["F1"]))
+# Neural Network
+metrics_df <- rbind(metrics_df, c("Neural Network", confusion_matrix_nn$overall["Accuracy"],
+                                  confusion_matrix_nn$byClass["Precision"],
+                                  confusion_matrix_nn$byClass["Recall"],
+                                  confusion_matrix_nn$byClass["F1"]))
+
+# Random Forest
+metrics_df <- rbind(metrics_df, c("Random Forest", confusion_matrix_rf$overall["Accuracy"],
+                                  confusion_matrix_rf$byClass["Precision"],
+                                  confusion_matrix_rf$byClass["Recall"],
+                                  confusion_matrix_rf$byClass["F1"]))
+
+# Rename the columns
+colnames(metrics_df) <- c("Model", "Accuracy", "Precision", "Recall", "F1_Score")
+# Print the dataframe
+metrics_df
+```
+
+```{r predictive error metrics}
+
+model_list <- list(model_dt, model_lr, model_nb, model_nn, model_rf)
+model_names <- c("Decision Tree", "Logistic Regression", "Naive Bayes", "Neural Network", "Random Forest")
+
+# Create a function to calculate MSE and RMSE
+calculate_metrics <- function(model, model_name, clientfinal) {
+  predictions <- as.numeric(predict(model, newdata = clientfinal))
+  errors <- as.numeric(predictions) - as.numeric(clientfinal$b2badoption)
+  mse <- mean(errors^2)
+  rmse <- sqrt(mse)
+  
+  data.frame(Model = model_name, MeanSquareError = mse, RootMeanSquareError = rmse, stringsAsFactors = FALSE)
+}
+
+# Apply the function to the models and combine the results
+emetrics_df <- purrr::map2_df(model_list, model_names, calculate_metrics, clientfinal = clientfinal)
+
+# Print the dataframe
+emetrics_df
+
+```
+
+```{r client variables}
+
+#client_charm<- capture.output(str(potentialclients))
+#names(potentialclients)
+
+# Manually provide descriptions for each variable
+variable_descc <- c(
+  "id" = "unique identifier for each client in the dataset.",
+  "type" = "categorizes client based on their offerings ",
+  "Postcode" = " geographical location associated with the client..",
+  "price_range" = " price range of the products or services offered by the client. ",
+  "greviews"   = " amount of feedback  received for the client's products or services on googleweb.",
+  "gscores"  = " overall satisfaction or evaluation of the client's offerings by Google/TripAdvisor.", 
+  "affordability"  = " an internal evaluation assigned based on price_range. reflects level of affordability ",
+  "review" = "an internal evaluation  assigned based  on greviews.  reflects level of acceptance",
+  "quality" = "an internal evaluation  assigned based on gscores.reflects level of standards",
+  "irating" = "an internal evaluation rating assigned based on a rating table,",
+  "menu_count" = "the number of menu items offered by the client. ",
+  "digital_payment" = "whether the client accepts digital payment methods: NFC, mobilepayments, or online payment platforms.",
+  "online_reservation" = "indicates whether the client offers online reservation services for their products or services",
+  "online_ordering_delivery" = "represents whether the client provides online ordering and delivery services for their products or services.",
+  "ecommerce_ownvebsite" = "indicates whether the client has their own e-commerce website to sell their products or services.",
+  "ecommerce_glovo"         = "e-commerce platforms or delivery services.",
+  "ecommerce_justeat"      = "e-commerce platforms or delivery services.",
+  "ecommerce_ubereats"    = "e-commerce platforms or delivery services.",
+  "ecommerce_thefork"       = "e-commerce platforms or delivery services.",
+  "ecommerce_deliveroo"     = "e-commerce platforms or delivery services.",
+  "ecommerce_otter"         = "e-commerce platforms or delivery services.",
+  "ecommerce_integration"    = "e-commerce platforms or delivery services.",
+  "promotions_discounts"  = " whether the client offers promotions or discounts for their products or services..",
+  "online_presence" = " client's online presence, such as having a website, social media accounts",
+  "foodbeverage" = "whether the client sells prepared food and beverage",
+  "mexican_grocery_market" = "whether the client operates in the Mexican grocery market specifically.",
+ "existing_B2B"  = " whether the client has existing business-to-business (B2B) partnerships or collaborations. ",
+  "shop_Size_shop_count"   = " size or number of physical shops owned by the client. ",
+   "b2badoption" = "a target variable that indicates whether the client will accept a business-to-business (B2B) or partnership proposal. "
+)
+
+# Create a dataframe with variable descriptions
+cvariable_df <- data.frame(variable = names(variable_descc), description = variable_descc, row.names = NULL)
+
+#str(menu_data)
+
+```
+
+
+```{r save all outputs}
+library(openxlsx); wb <- createWorkbook(); addWorksheet(wb, "importantvar"); 
+addWorksheet(wb, "ConfusionMatx");
+addWorksheet(wb, "PerformanceMtrxr");
+addWorksheet(wb, "ErrorMtrx");
+addWorksheet(wb, "clustcatecount");
+addWorksheet(wb, "menudata");
+addWorksheet(wb, "menuvariable");
+addWorksheet(wb, "clientdata");
+addWorksheet(wb, "clientvariable");
+
+writeData(wb, sheet = "importantvar", x = important_var_df); 
+writeData(wb, sheet = "ConfusionMatx", x = confusion_df):
+writeData(wb, sheet = "PerformanceMtrxr", x = metrics_df);
+writeData(wb, sheet = "ErrorMtrx", x = emetrics_df);
+writeData(wb, sheet = "clustcatecount", x = category_df);
+writeData(wb, sheet = "menudata", x = menufinal_data);
+writeData(wb, sheet = "menuvariable", x = mvariable_df);
+writeData(wb, sheet = "clientdata", x = clientfinal);
+writeData(wb, sheet = "clientvariable", x = cvariable_df);
+
+saveWorkbook(wb, "Project Analysis.xlsx", overwrite = TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
